@@ -1,0 +1,5 @@
+ofxAvFoundationHLSPlayer
+ofxCcv
+ofxGui
+ofxOsc
+ofxSyphon
