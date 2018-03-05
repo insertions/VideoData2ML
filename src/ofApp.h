@@ -33,6 +33,7 @@ public:
     
     string oscHost, oscAddress;
     int oscPort;
+    int video_source;
     
     bool sending;
 };

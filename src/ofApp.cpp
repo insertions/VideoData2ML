@@ -1,6 +1,10 @@
 #include "ofApp.h"
 
 
+#define LOCAL_VIDEO  0
+#define WEBCAM       1
+#define REMOTE_VIDEO 2
+
 void ofApp::setup() {
     //ofSetWindowShape(640, 480);
     
@@ -14,65 +18,71 @@ void ofApp::setup() {
     ccv.setup("image-net-2012.sqlite3");
     if (!ccv.isLoaded()) return;
     
-    //init webcam
-//    cam.initGrabber(320, 240);
+    video_source = LOCAL_VIDEO;
+    //video_source = WEBCAM;
+    //video_source = REMOTE_VIDEO;
     
-    //init local video file
-    localVideo.load("movies/test_cons.mov");
-    localVideo.setLoopState(OF_LOOP_NORMAL);
-    localVideo.play();
-    
-    //init youtube link
-//    FOX
-//    string youtube_url="https://www.youtube.com/watch?v=wNc5Po2eSc0";
-//    ALJAZEERA
-//    string youtube_url="https://www.youtube.com/watch?v=nVHt1_SWTZg";
-//    FOREIGN
-//    string youtube_url="https://www.youtube.com/watch?v=II2BMr4LzcU";
-    
-// FRANCE
-//    string youtube_url="https://www.youtube.com/watch?v=9c_Bac-17Rk";
-//    ABC
-//    string youtube_url="https://www.youtube.com/watch?v=dV2z7tGeVoI";
-    
-//SKY
-//    string youtube_url="https://www.youtube.com/watch?v=U2HvpnStNQo";
-//    NETTV
-//    string youtube_url="https://www.youtube.com/watch?v=FcEfFCGygWY";
-    
-
-//    string m3u8_url = from_youtube_url_to_m3u8_url(youtube_url);
-//    load_webvideo(m3u8_url);
+    switch(video_source)
+    {
+        case LOCAL_VIDEO:
+            localVideo.load("movies/fingers.mov");
+            localVideo.setLoopState(OF_LOOP_NORMAL);
+            localVideo.play();
+            break;
+        
+        case WEBCAM:
+            cam.initGrabber(320, 240);
+            break;
+        
+        case REMOTE_VIDEO:
+            string youtube_url="https://www.youtube.com/watch?v=wNc5Po2eSc0";
+            string m3u8_url = from_youtube_url_to_m3u8_url(youtube_url);
+            load_webvideo(m3u8_url);
+            break;
+    }
 }
 
 void ofApp::update() {
-    //cam.update();
-    localVideo.update();
-//    webVideo.update();
+    switch(video_source)
+    {
+        case LOCAL_VIDEO:
+            localVideo.update();
+            break;
+        case WEBCAM:
+            cam.update();
+            break;
+        case REMOTE_VIDEO:
+            webVideo.update();
+            break;
+    }
 }
 
 void ofApp::sendOsc() {
-// FOR CAMARA
-    //featureEncoding = ccv.encode(cam, ccv.numLayers()-1); // camara
-//    For LOCAL VIDEO
-    featureEncoding = ccv.encode(localVideo, ccv.numLayers()-1); // local video
     
-    //    JERA
-    //    ofxAvFoundationHLSPlayer cannot be sent directly to ccv.encode.
-    //    you need to transcode it to an ofImage first to make it work.
-    //    however, trancscoding from ofxAvFoundationHLSPlayer to ofImage seems bugged due to
-    //    lack of support on ofxAvFoundationHLSPlayer image type (currently undentified).
-    //    the following code is a little hacking to make it work, that involves:
-    //    ofxAvFoundationHLSPlayer > ofTexture > ofPixels > ofImage
-    
-    
-// For WEB
-//    ofTexture webTexture(webVideo.getTexture());
-//    ofPixels pixels;
-//    webTexture.readToPixels(pixels);
-//    ofImage webFrame;
-//    webFrame.setFromPixels(pixels);
-//    featureEncoding = ccv.encode(webFrame, ccv.numLayers()-1);
+    switch(video_source)
+    {
+        case LOCAL_VIDEO:
+            featureEncoding = ccv.encode(localVideo, ccv.numLayers()-1);
+            break;
+        case WEBCAM:
+            featureEncoding = ccv.encode(cam, ccv.numLayers()-1);
+            break;
+        case REMOTE_VIDEO:
+            //    JERA
+            //    ofxAvFoundationHLSPlayer cannot be sent directly to ccv.encode.
+            //    you need to transcode it to an ofImage first to make it work.
+            //    however, trancoding from ofxAvFoundationHLSPlayer to ofImage seems bugged due to
+            //    lack of support on ofxAvFoundationHLSPlayer image type (currently undentified).
+            //    the following code is a little hacking to make it work, that involves:
+            //    ofxAvFoundationHLSPlayer > ofTexture > ofPixels > ofImage
+            ofTexture webTexture(webVideo.getTexture());
+            ofPixels pixels;
+            webTexture.readToPixels(pixels);
+            ofImage webFrame;
+            webFrame.setFromPixels(pixels);
+            featureEncoding = ccv.encode(webFrame, ccv.numLayers()-1);
+            break;
+    }
     
     msg.clear();
     msg.setAddress(oscAddress);
@@ -92,10 +102,19 @@ void ofApp::keyPressed(int key) {
 void ofApp::draw() {
     
     ofSetColor(255);
-    
-    //cam.draw(0, 0, ofGetWidth(), ofGetHeight());
-    localVideo.draw(0, 0, ofGetWidth(), ofGetHeight());
-//    webVideo.draw(0, 0, ofGetWidth(), ofGetHeight());
+
+    switch(video_source)
+    {
+        case LOCAL_VIDEO:
+            localVideo.draw(0, 0, ofGetWidth(), ofGetHeight());
+            break;
+        case WEBCAM:
+            cam.draw(0, 0, ofGetWidth(), ofGetHeight());
+            break;
+        case REMOTE_VIDEO:
+            webVideo.draw(0, 0, ofGetWidth(), ofGetHeight());
+            break;
+    }
     
     if (!ccv.isLoaded()) {
         ofDrawBitmapString("Network file not found! Check your data folder to make sure it exists.", 10, 20);
