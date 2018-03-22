@@ -16,6 +16,8 @@ void ofApp::setup() {
     sending = false;
     
     ccv.setup("image-net-2012.sqlite3");
+    //ccv.setupFace("face.sqlite3");
+    
     if (!ccv.isLoaded()) return;
 
     video_source = LOCAL_VIDEO;
@@ -77,12 +79,13 @@ void ofApp::setup_input_source () {
         
             
         case SYPHON_VIDEO:
-            //dir.setup();
             syphonClient.setup();
-            //syphonClient.set(dir.getDescription(0));
             break;
     }
 }
+
+
+vector<ofRectangle> results;
 
 //--------------------------------------------------------------
 void ofApp::update() {
@@ -93,6 +96,7 @@ void ofApp::update() {
             break;
         case WEBCAM:
             cam.update();
+            
             break;
         case REMOTE_VIDEO: {
             webVideo.update();
@@ -103,6 +107,9 @@ void ofApp::update() {
             break;
         }
     }
+    
+    //if (sending)
+    //    sendOsc();
 }
 
 //--------------------------------------------------------------
@@ -120,9 +127,17 @@ void ofApp::sendOsc() {
 
     switch(video_source)
     {
-        case LOCAL_VIDEO:
-            featureEncoding = ccv.encode(localVideo, ccv.numLayers()-1);
+        case LOCAL_VIDEO: {
+            ofTexture t(localVideo.getTexture());
+            ofPixels pixels;
+            t.readToPixels(pixels);
+            ofImage img;
+            img.setFromPixels(pixels);
+            img.resize(300, 300);
+            //img.draw(20, 20, 120, 120);
+            featureEncoding = ccv.encode(img, ccv.numLayers()-1);
             break;
+        }
             
         case WEBCAM:
             featureEncoding = ccv.encode(cam, ccv.numLayers()-1);
@@ -139,21 +154,30 @@ void ofApp::sendOsc() {
             ofTexture webTexture(webVideo.getTexture());
             ofPixels pixels;
             webTexture.readToPixels(pixels);
-            ofImage webFrame;
-            webFrame.setFromPixels(pixels);
-            featureEncoding = ccv.encode(webFrame, ccv.numLayers()-1);
+            ofImage img;
+            img.setFromPixels(pixels);
+            img.resize(300, 300);
+            //img.draw(20, 20, 120, 120);
+            featureEncoding = ccv.encode(img, ccv.numLayers()-1);
             break;
         }
             
         case SYPHON_VIDEO: {
             if (!syphonClient.isSetup())
                 return;
-            //syphonClient.bind();
+            
+            ofFbo fbo;
+            fbo.allocate(syphonClient.getWidth(), syphonClient.getHeight(), GL_RGBA);
+            fbo.begin();
+            syphonClient.draw(0, 0);
+            fbo.end();
             ofPixels pixels;
-            syphonClient.getTexture().readToPixels(pixels);
-            //ofImage syphonFrame;
-            //syphonFrame.setFromPixels(pixels);
-            featureEncoding = ccv.encode(pixels, ccv.numLayers()-1);
+            fbo.readToPixels(pixels);
+            ofImage sFrame;
+            sFrame.setFromPixels(pixels);
+            
+            featureEncoding = ccv.encode(sFrame, ccv.numLayers()-1);
+            //syphonClient.unbind();
             break;
         }
             
@@ -236,18 +260,21 @@ void ofApp::draw() {
             ofDrawBitmapStringHighlight("Source: WEBCAM", 10, ofGetHeight()-30,
                                         ofColor(ofColor::black, 90), ofColor::yellow);
             break;
-        case REMOTE_VIDEO:
+            
+        case REMOTE_VIDEO: {
             webVideo.draw(0, 0, ofGetWidth(), ofGetHeight());
             ofDrawBitmapStringHighlight("Source: REMOTE_VIDEO", 10, ofGetHeight()-60,
                                         ofColor(ofColor::black, 90), ofColor::yellow);
              ofDrawBitmapStringHighlight("Press - to change the remote link", 10, ofGetHeight()-30, ofColor(ofColor::black, 90), ofColor::yellow);
+            
             break;
+        }
+            
         case SYPHON_VIDEO: {
             if (!syphonClient.isSetup())
                 return;
             
             syphonClient.draw(0, 0, ofGetWidth(), ofGetHeight());
-        
             ofDrawBitmapStringHighlight("Source: SYPHON_VIDEO", 10, ofGetHeight()-30,
                                         ofColor(ofColor::black, 90), ofColor::yellow);
             break;
@@ -264,7 +291,6 @@ void ofApp::draw() {
     if (sending) {
         ofDrawBitmapStringHighlight("sending "+ofToString(msg.getNumArgs())+" values", 10, 70, ofColor(ofColor::black, 90), ofColor::yellow);
         ofDrawBitmapStringHighlight("to "+oscHost+" port "+ofToString(oscPort)+", address \""+oscAddress+"\"", 10, 20, ofColor(ofColor::black, 90), ofColor::yellow);
-        sendOsc();
     }
     else
         ofDrawBitmapStringHighlight("Press space to start sending inputs to Wekinator", 10, 20, ofColor(ofColor::black, 90), ofColor::yellow);
@@ -276,7 +302,8 @@ void ofApp::draw() {
     ofDrawBitmapStringHighlight("Press 3 for remote video",(ofGetWidth()/2)-80,(ofGetHeight()/2)+10, ofColor(ofColor::black, 90), ofColor::yellow);
     ofDrawBitmapStringHighlight("Press 4 for syphon video",(ofGetWidth()/2)-80,(ofGetHeight()/2)+40, ofColor(ofColor::black, 90), ofColor::yellow);
     
-
+    if (sending)
+        sendOsc();
     
 }
 
