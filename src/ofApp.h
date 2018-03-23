@@ -17,8 +17,8 @@
 #define FACE_TRACKER 1
 #define CLASSIFIER   2
 
-#define RESIZE_WIDTH  224
-#define RESIZE_HEIGHT 224
+#define RESIZE_WIDTH  400
+#define RESIZE_HEIGHT 400
 
 #define OSC_ADDRESS_WEKINATOR    "/wek/inputs"
 #define OSC_ADDRESS_FACE_TRACKER "/face"

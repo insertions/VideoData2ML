@@ -198,9 +198,6 @@ void ofApp::computeFeatures(ofImage& img) {
 //@TODO - 3. TEST EVERYTHING TOGETHER!
 //--------------------------------------------------------------
 void ofApp::sendOsc() {
-
-    msg.clear();
-    msg.setAddress(oscAddress);
     
     switch(output_source)
     {
@@ -219,8 +216,6 @@ void ofApp::sendOsc() {
             send_classifier_OSC();
             break;
     }
-    
-    osc.sendMessage(msg);
 
 }
 
