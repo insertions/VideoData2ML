@@ -6,28 +6,40 @@
 void ofApp::setup() {
     //ofSetWindowShape(640, 480);
     
-    ofSetWindowTitle("Video Data 2 Wekinator");
+    ofSetWindowTitle("Video Data 2 ML");
+    //ofDisableAlphaBlending();
     
     oscPort = 6448;
-    oscAddress = "/wek/inputs";
+    //oscAddress = "/wek/inputs";
     oscHost = "localhost";
     
     osc.setup(oscHost, oscPort);
     sending = false;
-    
-    ccv.setup("image-net-2012.sqlite3");
+
+    //ccv.setup("image-net-2012.sqlite3");
     //ccv.setupFace("face.sqlite3");
     
-    if (!ccv.isLoaded()) return;
-
-    video_source = LOCAL_VIDEO;
-    //video_source = WEBCAM;
-    //video_source = REMOTE_VIDEO;
-    //video_source = SYPHON_VIDEO;
+    /*
+    if (!ccv.isLoaded())  {
+        cout << "ccv not loaded!"<<endl;
+        return;
+    }
+     */
+    
+    input_source = LOCAL_VIDEO;
+    //input_source = WEBCAM;
+    //input_source = REMOTE_VIDEO;
+    //input_source = SYPHON_VIDEO;
+    
+    output_source = WEKINATOR;
+    //output_source = FACE_TRACKER;
+    //output_source = CLASSIFIER;
     
     load_local_video_files();
     
     setup_input_source();
+    setup_output_source();
+    
 }
 
 //--------------------------------------------------------------
@@ -59,7 +71,7 @@ void ofApp::setup_input_source () {
     cam.close();
     webVideo.stop();
     
-    switch(video_source)
+    switch(input_source)
     {
         case LOCAL_VIDEO: {
             string v = localVideoFiles.getPath(local_video_index);
@@ -84,32 +96,73 @@ void ofApp::setup_input_source () {
     }
 }
 
-
-vector<ofRectangle> results;
+//--------------------------------------------------------------
+void ofApp::setup_output_source () {
+    switch(output_source)
+    {
+        case WEKINATOR:
+            ccv.setup("image-net-2012.sqlite3");
+            break;
+        
+        case FACE_TRACKER:
+            ccv.setupFace("face.sqlite3");
+            break;
+            
+        case CLASSIFIER:
+            ccv.setup("image-net-2012.sqlite3");
+            break;
+    }
+}
 
 //--------------------------------------------------------------
 void ofApp::update() {
-    switch(video_source)
+    ofImage currentFrame;
+    ofPixels pixels;
+    
+    switch(input_source)
     {
         case LOCAL_VIDEO:
             localVideo.update();
+            localVideo.getTexture().readToPixels(pixels);
             break;
+            
         case WEBCAM:
             cam.update();
-            
+            cam.getTexture().readToPixels(pixels);
             break;
+            
         case REMOTE_VIDEO: {
             webVideo.update();
-            
+            webVideo.getTexture().readToPixels(pixels);
+        
             if (ofGetFrameNum() % 30 == 0)
                 checkSettings();
-            
+            break;
+        }
+        case SYPHON_VIDEO: {
+            ofFbo fbo;
+            fbo.allocate(syphonClient.getWidth(), syphonClient.getHeight(), GL_RGBA);
+            fbo.begin();
+            syphonClient.draw(0, 0);
+            fbo.end();
+            fbo.readToPixels(pixels);
             break;
         }
     }
     
-    //if (sending)
-    //    sendOsc();
+    pixels.setImageType(OF_IMAGE_COLOR);
+    currentFrame.setFromPixels(pixels);
+    currentFrame.resize(RESIZE_WIDTH, RESIZE_HEIGHT);
+    //cout << "number of pixels " <<currentFrame.getPixels().size() << endl;
+    
+    //            if(localVideo.isPlaying() && localVideo.isFrameNew())
+    //                results_face = ccv.classifyFace(localVideo);
+    //                results_classifier = ccv.classify(localVideo);
+    
+    if (sending) {
+        computeFeatures(currentFrame);
+        sendOsc();
+    }
 }
 
 //--------------------------------------------------------------
@@ -123,94 +176,212 @@ void ofApp::checkSettings(){
 }
 
 //--------------------------------------------------------------
+void ofApp::computeFeatures(ofImage& img) {
+    switch(output_source)
+    {
+        case WEKINATOR:
+            featureEncoding = ccv.encode(img, ccv.numLayers()-1);
+            break;
+            
+        case FACE_TRACKER:
+            results_face = ccv.classifyFace(img);
+            break;
+            
+        case CLASSIFIER:
+            results_classifier = ccv.classify(img);
+            break;
+    }
+}
+
+//@TODO - 1. FORMAT OSC MESSAGES TO BE SENT
+//@TODO - 2. MAKE UI TO REFLECT THE AVAILABLE OUTPUT
+//@TODO - 3. TEST EVERYTHING TOGETHER!
+//--------------------------------------------------------------
 void ofApp::sendOsc() {
 
-    switch(video_source)
-    {
-        case LOCAL_VIDEO: {
-            ofTexture t(localVideo.getTexture());
-            ofPixels pixels;
-            t.readToPixels(pixels);
-            ofImage img;
-            img.setFromPixels(pixels);
-            img.resize(300, 300);
-            //img.draw(20, 20, 120, 120);
-            featureEncoding = ccv.encode(img, ccv.numLayers()-1);
-            break;
-        }
-            
-        case WEBCAM:
-            featureEncoding = ccv.encode(cam, ccv.numLayers()-1);
-            break;
-            
-        case REMOTE_VIDEO: {
-            //    JERA
-            //    ofxAvFoundationHLSPlayer cannot be sent directly to ccv.encode.
-            //    you need to transcode it to an ofImage first to make it work.
-            //    however, trancoding from ofxAvFoundationHLSPlayer to ofImage seems bugged due to
-            //    lack of support on ofxAvFoundationHLSPlayer image type (currently undentified).
-            //    the following code is a little hacking to make it work, that involves:
-            //    ofxAvFoundationHLSPlayer > ofTexture > ofPixels > ofImage
-            ofTexture webTexture(webVideo.getTexture());
-            ofPixels pixels;
-            webTexture.readToPixels(pixels);
-            ofImage img;
-            img.setFromPixels(pixels);
-            img.resize(300, 300);
-            //img.draw(20, 20, 120, 120);
-            featureEncoding = ccv.encode(img, ccv.numLayers()-1);
-            break;
-        }
-            
-        case SYPHON_VIDEO: {
-            if (!syphonClient.isSetup())
-                return;
-            
-            ofFbo fbo;
-            fbo.allocate(syphonClient.getWidth(), syphonClient.getHeight(), GL_RGBA);
-            fbo.begin();
-            syphonClient.draw(0, 0);
-            fbo.end();
-            ofPixels pixels;
-            fbo.readToPixels(pixels);
-            ofImage sFrame;
-            sFrame.setFromPixels(pixels);
-            
-            featureEncoding = ccv.encode(sFrame, ccv.numLayers()-1);
-            //syphonClient.unbind();
-            break;
-        }
-            
-    }
-    
     msg.clear();
     msg.setAddress(oscAddress);
-    for (int i=0; i<featureEncoding.size(); i++) {
-        msg.addFloatArg(featureEncoding[i]);
-    }
-    osc.sendMessage(msg);
     
+    switch(output_source)
+    {
+        case WEKINATOR:
+            oscAddress = OSC_ADDRESS_WEKINATOR;
+            send_wekinator_OSC();
+            break;
+            
+        case FACE_TRACKER:
+            oscAddress = OSC_ADDRESS_FACE_TRACKER;
+            send_face_tracking_OSC();
+            break;
+            
+        case CLASSIFIER:
+            oscAddress = OSC_ADDRESS_CLASSIFIER;
+            send_classifier_OSC();
+            break;
+    }
+    
+    osc.sendMessage(msg);
+
 }
+
+//--------------------------------------------------------------
+void ofApp::send_wekinator_OSC() {
+    msg.clear();
+    msg.setAddress(oscAddress);
+    for (int i=0; i<featureEncoding.size(); i++)
+        msg.addFloatArg(featureEncoding[i]);
+    osc.sendMessage(msg);
+}
+
+//--------------------------------------------------------------
+void ofApp::send_face_tracking_OSC() {
+    
+    for(int i = 0; i < results_face.size(); i++) {
+        msg.clear();
+        msg.setAddress(oscAddress);
+        
+//        results_face[i] = ofRectangle(results_face[i].getX()/localVideo.getWidth(),
+//                                      results_face[i].getY()/localVideo.getHeight(),
+//                                      results_face[i].getWidth()/localVideo.getWidth(),
+//                                      results_face[i].getHeight()/localVideo.getHeight());
+
+        results_face[i] = ofRectangle(results_face[i].getX()/RESIZE_WIDTH,
+                                      results_face[i].getY()/RESIZE_HEIGHT,
+                                      results_face[i].getWidth()/RESIZE_WIDTH,
+                                      results_face[i].getHeight()/RESIZE_HEIGHT);
+        
+        msg.addIntArg(i);
+        msg.addFloatArg(results_face[i].getX());
+        msg.addFloatArg(results_face[i].getY());
+        msg.addFloatArg(results_face[i].getWidth());
+        msg.addFloatArg(results_face[i].getHeight());
+        
+        osc.sendMessage(msg);
+    }
+
+}
+
+//--------------------------------------------------------------
+void ofApp::send_classifier_OSC() {
+    for(int i = 0; i < results_classifier.size(); i++) {
+        msg.clear();
+        msg.setAddress(oscAddress);
+        
+        msg.addFloatArg(results_classifier[i].confidence);
+        msg.addStringArg(results_classifier[i].imageNetName);
+    
+        osc.sendMessage(msg);
+    }
+}
+
+
+////--------------------------------------------------------------
+//void ofApp::sendOsc() {
+//
+//    switch(input_source)
+//    {
+//        case LOCAL_VIDEO: {
+//            ofTexture t(localVideo.getTexture());
+//            ofPixels pixels;
+//            t.readToPixels(pixels);
+//            ofImage img;
+//            img.setFromPixels(pixels);
+//            img.resize(300, 300);
+//            //img.draw(20, 20, 120, 120);
+//            featureEncoding = ccv.encode(img, ccv.numLayers()-1);
+//            break;
+//        }
+//
+//        case WEBCAM:
+//            featureEncoding = ccv.encode(cam, ccv.numLayers()-1);
+//            break;
+//
+//        case REMOTE_VIDEO: {
+//            //    JERA
+//            //    ofxAvFoundationHLSPlayer cannot be sent directly to ccv.encode.
+//            //    you need to transcode it to an ofImage first to make it work.
+//            //    however, trancoding from ofxAvFoundationHLSPlayer to ofImage seems bugged due to
+//            //    lack of support on ofxAvFoundationHLSPlayer image type (currently undentified).
+//            //    the following code is a little hacking to make it work, that involves:
+//            //    ofxAvFoundationHLSPlayer > ofTexture > ofPixels > ofImage
+//            ofTexture webTexture(webVideo.getTexture());
+//            ofPixels pixels;
+//            webTexture.readToPixels(pixels);
+//            ofImage img;
+//            img.setFromPixels(pixels);
+//            img.resize(300, 300);
+//            //img.draw(20, 20, 120, 120);
+//            featureEncoding = ccv.encode(img, ccv.numLayers()-1);
+//            break;
+//        }
+//
+//        case SYPHON_VIDEO: {
+//            if (!syphonClient.isSetup())
+//                return;
+//
+//            ofFbo fbo;
+//            fbo.allocate(syphonClient.getWidth(), syphonClient.getHeight(), GL_RGBA);
+//            fbo.begin();
+//            syphonClient.draw(0, 0);
+//            fbo.end();
+//            ofPixels pixels;
+//            fbo.readToPixels(pixels);
+//            ofImage sFrame;
+//            sFrame.setFromPixels(pixels);
+//            sFrame.resize(300, 300);
+//
+//            featureEncoding = ccv.encode(sFrame, ccv.numLayers()-1);
+//
+//            break;
+//        }
+//
+//    }
+//
+//    msg.clear();
+//    msg.setAddress(oscAddress);
+//    for (int i=0; i<featureEncoding.size(); i++) {
+//        msg.addFloatArg(featureEncoding[i]);
+//    }
+//    osc.sendMessage(msg);
+//
+//}
 
 //--------------------------------------------------------------
 void ofApp::keyPressed(int key) {
     
     switch (key) {
     case '1':
-        video_source = LOCAL_VIDEO;
+        input_source = LOCAL_VIDEO;
         setup_input_source();
         break;
     case '2':
-        video_source = WEBCAM;
+        input_source = WEBCAM;
         setup_input_source();
         break;
     case '3':
-        video_source = REMOTE_VIDEO;
+        input_source = REMOTE_VIDEO;
         setup_input_source();
         break;
     case '4':
-        video_source = SYPHON_VIDEO;
+        input_source = SYPHON_VIDEO;
         setup_input_source();
+        break;
+            
+            
+    case 'a':
+        sending = false;
+        output_source = WEKINATOR;
+        setup_output_source();
+        break;
+    case 's':
+        sending = false;
+        output_source = FACE_TRACKER;
+        setup_output_source();
+        break;
+    case 'd':
+        sending = false;
+        output_source = CLASSIFIER;
+        setup_output_source();
         break;
     case ' ':
         sending = !sending;
@@ -218,19 +389,19 @@ void ofApp::keyPressed(int key) {
     
     case '=':
     case '+':
-        if (video_source == LOCAL_VIDEO) {
-            next_local_video();
+        if (input_source == LOCAL_VIDEO) {
+            previous_local_video();
             setup_input_source();
         }
         break;
     
     case '-':
-        if (video_source == LOCAL_VIDEO) {
-            previous_local_video();
+        if (input_source == LOCAL_VIDEO) {
+            next_local_video();
             setup_input_source();
         }
             
-        if (video_source == REMOTE_VIDEO)
+        if (input_source == REMOTE_VIDEO)
             ofSystem("open "+ofToDataPath("video.txt"));
         break;
     
@@ -239,34 +410,102 @@ void ofApp::keyPressed(int key) {
     
 }
 
-bool firstTime = true;
 
 //--------------------------------------------------------------
 void ofApp::draw() {
     
-    ofSetColor(255);
-
-    switch(video_source)
+    //ofPushStyle();
+    
+    switch(input_source)
     {
-        case LOCAL_VIDEO:
+        case LOCAL_VIDEO: {
             localVideo.draw(0, 0, ofGetWidth(), ofGetHeight());
-            ofDrawBitmapStringHighlight("Source: LOCAL_VIDEO", 10, ofGetHeight()-60,
-                                        ofColor(ofColor::black, 90), ofColor::yellow);
-            ofDrawBitmapStringHighlight("File: " + localVideoFiles.getPath(local_video_index) + "\nPress - to change current video", 10, ofGetHeight()-30, ofColor(ofColor::black, 90), ofColor::yellow);
-            break;
+     
+// DRAWING FACE DATA
+//            ofPushStyle();
+//            ofNoFill();
+//            ofSetLineWidth(2);
+//            if (results_face.size() >0)
+//
+//            for(int i = 0; i < results_face.size(); i++) {
+//                //cout << i << " - x: " << results[i].getPosition().x << " y: " << results[i].getPosition().y << endl;
+//
+//                results_face[i] = ofRectangle(results_face[i].getX()/localVideo.getWidth()*ofGetWidth(),
+//                                              results_face[i].getY()/localVideo.getHeight()*ofGetHeight(),
+//                                              results_face[i].getWidth()/localVideo.getWidth()*ofGetWidth(),
+//                                              results_face[i].getHeight()/localVideo.getHeight()*ofGetHeight());
+//                ofDrawRectangle(results_face[i]);
+//                ofDrawBitmapStringHighlight(ofToString(i), results_face[i].getPosition());
+//            }
+//            ofPopStyle();
         
-        case WEBCAM:
-            cam.draw(0, 0, ofGetWidth(), ofGetHeight());
-            ofDrawBitmapStringHighlight("Source: WEBCAM", 10, ofGetHeight()-30,
-                                        ofColor(ofColor::black, 90), ofColor::yellow);
+//DRAWING CLASISFIER DATA
+//            ofPushStyle();
+//            ofTranslate(5, 5);
+//            for(int i = 0; i < results_classifier.size(); i++) {
+//                ofSetColor(ofColor::white);
+//                ofFill();
+//                ofDrawRectangle(0, 0, 100, 10);
+//                ofSetColor(ofColor::black);
+//                ofDrawRectangle(1, 1, (100-2) * results_classifier[i].confidence, 10-2);
+//                ofSetColor(ofColor::white);
+//                ofDrawBitmapStringHighlight(results_classifier[i].imageNetName, 105, 10);
+//                ofTranslate(0, 15);
+//            }
+//            ofPopStyle();
+            
+            
+//            ofDrawBitmapStringHighlight("Input: LOCAL_VIDEO", 10, ofGetHeight()-60,
+//                                        ofColor(ofColor::black, 90), ofColor::yellow);
+//            ofDrawBitmapStringHighlight("File: " + localVideoFiles.getPath(local_video_index) + "\nPress - to change current video", 10, ofGetHeight()-30, ofColor(ofColor::black, 90), ofColor::yellow);
+            
+            stringstream in_msg;
+            in_msg << "Current Input: LOCAL_VIDEO" <<endl<<endl;
+            in_msg << "Available inputs..." << endl;
+            in_msg << "   1: local" << endl;
+            in_msg << "   2: webcam" << endl;
+            in_msg << "   3: remote" << endl;
+            in_msg << "   4: syphon" <<endl << endl;
+            in_msg << "File: " + localVideoFiles.getPath(local_video_index) + "\nPress - to change current video";
+            
+            ofDrawBitmapStringHighlight(in_msg.str(), 10, ofGetHeight()-150, ofColor(ofColor::black, 90), ofColor::yellow);
+            
             break;
+        }
+        
+        case WEBCAM: {
+            cam.draw(0, 0, ofGetWidth(), ofGetHeight());
+//            ofDrawBitmapStringHighlight("Input: WEBCAM", 10, ofGetHeight()-30,
+//                                        ofColor(ofColor::black, 90), ofColor::yellow);
+            stringstream in_msg;
+            in_msg << "Current Input: WEBCAM" <<endl<<endl;
+            in_msg << "Available inputs..." << endl;
+            in_msg << "   1: local" << endl;
+            in_msg << "   2: webcam" << endl;
+            in_msg << "   3: remote" << endl;
+            in_msg << "   4: syphon";
+            //in_msg << "File: " + localVideoFiles.getPath(local_video_index) + "\nPress - to change current video";
+            
+            ofDrawBitmapStringHighlight(in_msg.str(), 10, ofGetHeight()-150, ofColor(ofColor::black, 90), ofColor::yellow);
+            break;
+        }
             
         case REMOTE_VIDEO: {
             webVideo.draw(0, 0, ofGetWidth(), ofGetHeight());
-            ofDrawBitmapStringHighlight("Source: REMOTE_VIDEO", 10, ofGetHeight()-60,
-                                        ofColor(ofColor::black, 90), ofColor::yellow);
-             ofDrawBitmapStringHighlight("Press - to change the remote link", 10, ofGetHeight()-30, ofColor(ofColor::black, 90), ofColor::yellow);
+//            ofDrawBitmapStringHighlight("Input: REMOTE_VIDEO", 10, ofGetHeight()-60,
+//                                        ofColor(ofColor::black, 90), ofColor::yellow);
+//             ofDrawBitmapStringHighlight("Press - to change the remote link", 10, ofGetHeight()-30, ofColor(ofColor::black, 90), ofColor::yellow);
+
+            stringstream in_msg;
+            in_msg << "Current Input: REMOTE_VIDEO" <<endl<<endl;
+            in_msg << "Available inputs..." << endl;
+            in_msg << "   1: local" << endl;
+            in_msg << "   2: webcam" << endl;
+            in_msg << "   3: remote" << endl;
+            in_msg << "   4: syphon" <<endl << endl;
+            in_msg << "Press - to change current video";
             
+            ofDrawBitmapStringHighlight(in_msg.str(), 10, ofGetHeight()-150, ofColor(ofColor::black, 90), ofColor::yellow);
             break;
         }
             
@@ -275,8 +514,20 @@ void ofApp::draw() {
                 return;
             
             syphonClient.draw(0, 0, ofGetWidth(), ofGetHeight());
-            ofDrawBitmapStringHighlight("Source: SYPHON_VIDEO", 10, ofGetHeight()-30,
-                                        ofColor(ofColor::black, 90), ofColor::yellow);
+//            ofDrawBitmapStringHighlight("Input: SYPHON_VIDEO", 10, ofGetHeight()-30,
+//                                        ofColor(ofColor::black, 90), ofColor::yellow);
+            
+            stringstream in_msg;
+            in_msg << "Current Input: SYPHON_VIDEO" <<endl<<endl;
+            in_msg << "Available inputs..." << endl;
+            in_msg << "   1: local" << endl;
+            in_msg << "   2: webcam" << endl;
+            in_msg << "   3: remote" << endl;
+            in_msg << "   4: syphon";
+            //in_msg << "File: " + localVideoFiles.getPath(local_video_index) + "\nPress - to change current video";
+            
+            ofDrawBitmapStringHighlight(in_msg.str(), 10, ofGetHeight()-150, ofColor(ofColor::black, 90), ofColor::yellow);
+            
             break;
         }
     }
@@ -286,25 +537,113 @@ void ofApp::draw() {
         return;
     }
     
-    ofSetColor(255);
+    //ofSetColor(255);
+    //ofPushStyle();
+    //ofSetRectMode(OF_RECTMODE_CENTER);
     
-    if (sending) {
-        ofDrawBitmapStringHighlight("sending "+ofToString(msg.getNumArgs())+" values", 10, 70, ofColor(ofColor::black, 90), ofColor::yellow);
-        ofDrawBitmapStringHighlight("to "+oscHost+" port "+ofToString(oscPort)+", address \""+oscAddress+"\"", 10, 20, ofColor(ofColor::black, 90), ofColor::yellow);
-    }
-    else
-        ofDrawBitmapStringHighlight("Press space to start sending inputs to Wekinator", 10, 20, ofColor(ofColor::black, 90), ofColor::yellow);
-    
-    ofDrawBitmapStringHighlight("FPS: " + ofToString(ofGetFrameRate()), 10, 50, ofColor(ofColor::black, 90), ofColor::yellow);
-    
-    ofDrawBitmapStringHighlight("Press 1 for local video",(ofGetWidth()/2)-75,(ofGetHeight()/2)-50, ofColor(ofColor::black, 90), ofColor::yellow);
-    ofDrawBitmapStringHighlight("Press 2 for webcam",(ofGetWidth()/2)-55,(ofGetHeight()/2)-20, ofColor(ofColor::black, 90), ofColor::yellow);
-    ofDrawBitmapStringHighlight("Press 3 for remote video",(ofGetWidth()/2)-80,(ofGetHeight()/2)+10, ofColor(ofColor::black, 90), ofColor::yellow);
-    ofDrawBitmapStringHighlight("Press 4 for syphon video",(ofGetWidth()/2)-80,(ofGetHeight()/2)+40, ofColor(ofColor::black, 90), ofColor::yellow);
+    stringstream output_status;
     
     if (sending)
-        sendOsc();
+        output_status << "Sending "+ofToString(msg.getNumArgs())+" values" << endl
+                      << "to "+oscHost+" port "+ofToString(oscPort)+", address \""+oscAddress+"\"";
+    else
+        output_status << "Press space to start sending outputs";
     
+//    if (sending) {
+//        ofDrawBitmapStringHighlight("sending "+ofToString(msg.getNumArgs())+" values", 10, 70, ofColor(ofColor::black, 90), ofColor::yellow);
+//        ofDrawBitmapStringHighlight("to "+oscHost+" port "+ofToString(oscPort)+", address \""+oscAddress+"\"", 10, 50, ofColor(ofColor::black, 90), ofColor::yellow);
+//    }
+//
+//    else
+//        ofDrawBitmapStringHighlight("Press space to start sending outputs", 10, 50, ofColor(ofColor::black, 90), ofColor::yellow);
+//
+    switch(output_source)
+    {
+        case WEKINATOR: {
+//            ofDrawBitmapStringHighlight("Output: WEKINATOR", 10, 20,
+//                                        ofColor(ofColor::black, 90), ofColor::yellow);
+            stringstream in_msg;
+            in_msg << "Current Output: WEKINATOR" <<endl<<endl;
+            in_msg << "Available Outputs..." << endl;
+            in_msg << "   a: wekinator" << endl;
+            in_msg << "   s: face tracking" << endl;
+            in_msg << "   d: classifier" << endl << endl;
+            in_msg << output_status.str();
+            
+            ofDrawBitmapStringHighlight(in_msg.str(), 10, 20, ofColor(ofColor::black, 90), ofColor::yellow);
+            
+            break;
+        }
+        case FACE_TRACKER: {
+//            ofDrawBitmapStringHighlight("Output: FACE_TRACKER", 10, 20,
+//                                        ofColor(ofColor::black, 90), ofColor::yellow);
+            stringstream in_msg;
+            in_msg << "Current Output: FACE_TRACKER" <<endl<<endl;
+            in_msg << "Available Outputs..." << endl;
+            in_msg << "   a: wekinator" << endl;
+            in_msg << "   s: face tracking" << endl;
+            in_msg << "   d: classifier" << endl << endl;
+            in_msg << output_status.str();
+            
+            ofPushStyle();
+            ofNoFill();
+            ofSetLineWidth(2);
+            for(int i = 0; i < results_face.size(); i++) {
+                results_face[i] = ofRectangle(results_face[i].getX()*ofGetWidth(),
+                                              results_face[i].getY()*ofGetHeight(),
+                                              results_face[i].getWidth()*ofGetWidth(),
+                                              results_face[i].getHeight()*ofGetHeight());
+                ofDrawRectangle(results_face[i]);
+                ofDrawBitmapStringHighlight(ofToString(i), results_face[i].getPosition());
+            }
+            ofPopStyle();
+            
+            ofDrawBitmapStringHighlight(in_msg.str(), 10, 20, ofColor(ofColor::black, 90), ofColor::yellow);
+            break;
+        }
+        case CLASSIFIER: {
+//            ofDrawBitmapStringHighlight("Output: CLASSIFIER", 10, 20,
+//                                        ofColor(ofColor::black, 90), ofColor::yellow);
+            stringstream in_msg;
+            in_msg << "Current Output: CLASSIFIER" <<endl<<endl;
+            in_msg << "Available Outputs..." << endl;
+            in_msg << "   a: wekinator" << endl;
+            in_msg << "   s: face tracking" << endl;
+            in_msg << "   d: classifier" << endl << endl;
+            in_msg << output_status.str();
+            
+            ofPushStyle();
+            ofTranslate(5, 5);
+            for(int i = 0; i < results_classifier.size(); i++) {
+                ofSetColor(ofColor::white);
+                ofFill();
+                ofDrawRectangle(0, 0, 100, 10);
+                ofSetColor(ofColor::black);
+                ofDrawRectangle(1, 1, (100-2) * results_classifier[i].confidence, 10-2);
+                ofSetColor(ofColor::white);
+                ofDrawBitmapStringHighlight(results_classifier[i].imageNetName, 105, 10);
+                ofTranslate(0, 15);
+            }
+            ofPopStyle();
+            
+            ofDrawBitmapStringHighlight(in_msg.str(), 10, 20, ofColor(ofColor::black, 90), ofColor::yellow);
+            break;
+        }
+    }
+    
+    
+    ofDrawBitmapStringHighlight("FPS: " + ofToString(ofGetFrameRate()), ofGetWidth()-125, 20, ofColor(ofColor::black, 90), ofColor::yellow);
+    
+//    ofDrawBitmapStringHighlight("INPUTS",(ofGetWidth()/2),(ofGetHeight()/2)-80, ofColor(ofColor::black, 90), ofColor::yellow);
+//    ofDrawBitmapStringHighlight("1 for local video",(ofGetWidth()/2)-75,(ofGetHeight()/2)-50, ofColor(ofColor::black, 90), ofColor::yellow);
+//    ofDrawBitmapStringHighlight("2 for webcam",(ofGetWidth()/2)-55,(ofGetHeight()/2)-20, ofColor(ofColor::black, 90), ofColor::yellow);
+//    ofDrawBitmapStringHighlight("3 for remote video",(ofGetWidth()/2)-80,(ofGetHeight()/2)+10, ofColor(ofColor::black, 90), ofColor::yellow);
+//    ofDrawBitmapStringHighlight("4 for syphon video",(ofGetWidth()/2)-80,(ofGetHeight()/2)+40, ofColor(ofColor::black, 90), ofColor::yellow);
+    
+//    if (sending)
+//        sendOsc();
+    
+    //ofPopStyle();
 }
 
 /*
